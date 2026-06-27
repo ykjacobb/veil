@@ -1,31 +1,17 @@
-# vendor/
+# vendor/ort/
 
-`nsfw-bundle.js` is a **generated** file — do not edit by hand.
+onnxruntime-web runtime files, **staged by `npm run setup`** from the installed
+`onnxruntime-web` package (not committed — see `.gitignore`):
 
-It is an IIFE bundle (built by `scripts/build-vendor.mjs` via esbuild) containing:
+- `ort.wasm.min.js` — the loader (global `ort`)
+- `ort-wasm-simd-threaded.wasm` + `.mjs` — the WASM backend (run single-threaded,
+  so no cross-origin isolation is needed)
 
-- TensorFlow.js
-- NSFWjs **core** + the **mobilenet_v2** model with weights inlined
+These are loaded by the **offscreen document** (`pages/offscreen.html` →
+`src/inference.js`), which runs the ViT NSFW model. They run there rather than
+in the service worker because a service worker can't use dynamic `import()`
+(which onnxruntime-web's wasm loader requires), and not in the content script
+because the page CSP would block it.
 
-It exposes `globalThis.__VEIL_NSFW = { loadModel, tf }` and runs 100% on-device —
-no CDN, no network calls, no separate model download.
-
-### Rebuild
-
-```bash
-npm install
-npm run build:vendor   # -> vendor/nsfw-bundle.js  (~4.6 MB)
-```
-
-### Why only mobilenet_v2?
-
-Importing nsfwjs's top-level entry inlines all three models (~40 MB). We import
-`nsfwjs/core` + `nsfwjs/models/mobilenet_v2` only, which keeps the bundle ~4.6 MB.
-
-### How it's loaded at runtime
-
-The content script does **not** `import()` this file (page CSP blocks content-script
-dynamic imports). Instead the service worker injects it with
-`chrome.scripting.executeScript`, which bypasses page CSP and shares the content
-script's isolated world — so `globalThis.__VEIL_NSFW` becomes visible to the
-content script.
+The model itself (`model/vit-nsfw-int8.onnx`, AdamCodd/vit-base-nsfw-detector,
+int8) is also fetched by `npm run setup`.

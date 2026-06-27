@@ -9,11 +9,14 @@
     "declarativeNetRequestFeedback",
     "webNavigation",
     "storage",
-    "scripting"
+    "offscreen"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "src/background.js"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
   "declarative_net_request": {
     "rule_resources": [

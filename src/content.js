@@ -1,10 +1,9 @@
 /*
  * VEIL content script (classic script, isolated world).
  *  - Belt-and-braces URL check on document_start (covers in-page SPA changes).
- *  - When the visual layer is unlocked, asks the service worker to inject the
- *    NSFW bundle (globalThis.__VEIL_NSFW) via chrome.scripting.executeScript —
- *    NOT dynamic import(), which the page CSP would block — then runs
- *    hide-then-reveal over <img>/<video>, including DOM mutations.
+ *  - When the visual layer is unlocked, finds images / videos / background
+ *    thumbnails and sends them to the service worker, which relays to the
+ *    offscreen document running the ViT NSFW model. Applies the block cover.
  *
  * keywords.js has already run in this same isolated world, so VEIL_* globals
  * are available.
@@ -36,10 +35,12 @@
   }
 
   // ---- Layer 2: visual filtering -------------------------------------------
+  // Classification runs in the offscreen document (onnxruntime-web + ViT model);
+  // the content script just sends image URLs / video-frame pixels and applies
+  // the verdict. Scores are { nsfw } in [0,1].
   var config = null;
-  var api = null; // globalThis.__VEIL_NSFW
-  var model = null;
   var MIN_DIMENSION = 36;
+  var INPUT_SIZE = 384;
   var videoTimers = new WeakMap();
   var SEEN = new WeakSet();
 
@@ -47,24 +48,11 @@
     return (w || 0) < MIN_DIMENSION || (h || 0) < MIN_DIMENSION;
   }
 
-  function scoresToObject(predictions) {
-    var out = {};
-    predictions.forEach(function (p) {
-      out[p.className] = p.probability;
-    });
-    return out;
-  }
-
-  // Cross-origin images taint the canvas, so model.classify throws. Refetch the
-  // bytes via the service worker (bypasses page CORS) -> untainted bitmap.
-  async function fetchBitmapViaSW(url) {
-    var resp = await sendMessage({ type: "veil:fetchImage", url: url });
-    if (!resp || !resp.ok) throw new Error("SW image fetch failed");
-    var bin = atob(resp.data);
-    var arr = new Uint8Array(bin.length);
-    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-    var blob = new Blob([arr], { type: resp.contentType || "image/jpeg" });
-    return createImageBitmap(blob);
+  // Classify an image by URL (offscreen doc fetches it, CORS-bypassed).
+  async function classifyUrl(url) {
+    var r = await sendMessage({ type: "veil:classifyUrl", url: url });
+    if (!r || !r.ok) throw new Error(r && r.error ? r.error : "classify failed");
+    return { nsfw: r.nsfw };
   }
 
   async function classifyImage(img) {
@@ -74,39 +62,36 @@
         img.addEventListener("error", resolve, { once: true });
       });
     }
-    if (tooSmall(img.naturalWidth, img.naturalHeight)) return { Neutral: 1 };
-    try {
-      return scoresToObject(await model.classify(img));
-    } catch (e) {
-      var src = img.currentSrc || img.src;
-      if (!src) throw e;
-      var bitmap = await fetchBitmapViaSW(src);
-      try {
-        return scoresToObject(await model.classify(bitmap));
-      } finally {
-        if (bitmap.close) bitmap.close();
-      }
-    }
+    if (tooSmall(img.naturalWidth, img.naturalHeight)) return { nsfw: 0 };
+    var src = img.currentSrc || img.src;
+    if (!src) return { nsfw: 0 };
+    return classifyUrl(src);
   }
 
-  // Draw the current frame and classify it. Throws on cross-origin taint
-  // (canvas pixel read blocked) — that's the signal to fail closed.
+  function rgbaToBase64(bytes) {
+    var bin = "";
+    var CHUNK = 0x8000;
+    for (var i = 0; i < bytes.length; i += CHUNK) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(bin);
+  }
+
+  // Draw the current video frame to 384x384 and send its pixels for scoring.
+  // getImageData throws on cross-origin taint — the caller then fails closed.
   async function classifyVideoFrameDirect(video) {
     var canvas = document.createElement("canvas");
-    canvas.width = Math.min(video.videoWidth, 224);
-    canvas.height = Math.min(video.videoHeight, 224);
-    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-    return scoresToObject(await model.classify(canvas));
-  }
-
-  // Classify a remote image URL (e.g. a video poster) via the SW fetch path.
-  async function classifyUrlViaSW(url) {
-    var bitmap = await fetchBitmapViaSW(url);
-    try {
-      return scoresToObject(await model.classify(bitmap));
-    } finally {
-      if (bitmap.close) bitmap.close();
-    }
+    canvas.width = INPUT_SIZE;
+    canvas.height = INPUT_SIZE;
+    var ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(video, 0, 0, INPUT_SIZE, INPUT_SIZE);
+    var imageData = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE); // may throw (taint)
+    var r = await sendMessage({
+      type: "veil:classifyPixels",
+      data: rgbaToBase64(new Uint8Array(imageData.data.buffer))
+    });
+    if (!r || !r.ok) throw new Error(r && r.error ? r.error : "classify failed");
+    return { nsfw: r.nsfw };
   }
 
   // Silence + freeze a covered video so its audio stops and it can't resume,
@@ -167,14 +152,8 @@
 
   // Map scores -> a block verdict, or null if clean.
   function verdictFor(scores) {
-    var porn = scores.Porn || 0;
-    var hentai = scores.Hentai || 0;
-    var sexy = scores.Sexy || 0;
-    if (porn >= config.pornThreshold || hentai >= config.hentaiThreshold) {
-      return { title: "Blocked by VEIL", sub: "Explicit content" };
-    }
-    if (sexy >= config.sexyThreshold) {
-      return { title: "Blocked by VEIL", sub: "Sensitive content" };
+    if ((scores.nsfw || 0) >= config.nsfwThreshold) {
+      return { title: "Blocked by VEIL", sub: "Adult content" };
     }
     return null;
   }
@@ -205,18 +184,60 @@
     el.classList.add("veil-clean");
   }
 
+  // Only classify elements near the viewport (so we don't hide the whole page
+  // and flood the single classifier), and never leave one hidden indefinitely.
+  var REVEAL_TIMEOUT_MS = 6000;
+  var io = null;
+  function whenNearViewport(el, fn) {
+    if (!("IntersectionObserver" in window)) {
+      fn();
+      return;
+    }
+    if (!io) {
+      io = new IntersectionObserver(
+        function (entries) {
+          for (var i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            if (e.isIntersecting && e.target.__veilRun) {
+              var run = e.target.__veilRun;
+              e.target.__veilRun = null;
+              io.unobserve(e.target);
+              run();
+            }
+          }
+        },
+        { rootMargin: "400px" }
+      );
+    }
+    el.__veilRun = fn;
+    io.observe(el);
+  }
+
+  // Hide → classify → apply verdict, with a safety timeout that reveals the
+  // element if classification is too slow, so nothing stays hidden ("black").
+  function hideClassifyApply(el, classify) {
+    el.classList.add("veil-pending");
+    var timer = setTimeout(function () {
+      if (!el.dataset.veilCovered) failOpen(el);
+    }, REVEAL_TIMEOUT_MS);
+    classify(el).then(
+      function (s) {
+        clearTimeout(timer);
+        applyVerdict(el, s);
+      },
+      function () {
+        clearTimeout(timer);
+        failOpen(el);
+      }
+    );
+  }
+
   function scanImage(img) {
     if (SEEN.has(img)) return;
     SEEN.add(img);
-    img.classList.add("veil-pending");
-    classifyImage(img).then(
-      function (s) {
-        applyVerdict(img, s);
-      },
-      function () {
-        failOpen(img);
-      }
-    );
+    whenNearViewport(img, function () {
+      hideClassifyApply(img, classifyImage);
+    });
   }
 
   /*
@@ -228,6 +249,12 @@
   function watchVideo(video) {
     if (SEEN.has(video)) return;
     SEEN.add(video);
+    whenNearViewport(video, function () {
+      startWatchingVideo(video);
+    });
+  }
+
+  function startWatchingVideo(video) {
     // Videos are NOT pre-hidden: an un-classifiable video could otherwise get
     // stuck hidden forever. They're covered the moment a frame is flagged or
     // can't be verified (usually the first readable tick for cross-origin).
@@ -242,7 +269,7 @@
 
     // Early catch: an explicit poster covers before frames even decode.
     if (video.poster) {
-      classifyUrlViaSW(video.poster).then(function (s) {
+      classifyUrl(video.poster).then(function (s) {
         if (!video.dataset.veilCovered && coverIfExplicit(video, s)) stop();
       }, function () {});
     }
@@ -291,15 +318,11 @@
     // Skip near-fullscreen backgrounds (page/hero art, not thumbnails).
     if (rect.width >= innerWidth * 0.9 && rect.height >= innerHeight * 0.9) return;
     SEEN.add(el);
-    el.classList.add("veil-pending");
-    classifyUrlViaSW(url).then(
-      function (s) {
-        applyVerdict(el, s); // reveals if clean, covers if explicit
-      },
-      function () {
-        failOpen(el);
-      }
-    );
+    whenNearViewport(el, function () {
+      hideClassifyApply(el, function () {
+        return classifyUrl(url);
+      });
+    });
   }
 
   function scanBackgrounds(root) {
@@ -311,7 +334,7 @@
   }
 
   function scanRoot(root) {
-    if (!model) return;
+    if (!config || !config.visualFilteringEnabled) return;
     if (root.querySelectorAll) {
       root.querySelectorAll("img").forEach(scanImage);
       root.querySelectorAll("video").forEach(watchVideo);
@@ -329,7 +352,7 @@
       scanImage(target);
     } else if (target.tagName === "VIDEO" && attr === "poster") {
       if (!target.dataset.veilCovered && target.poster) {
-        classifyUrlViaSW(target.poster).then(function (s) {
+        classifyUrl(target.poster).then(function (s) {
           coverIfExplicit(target, s);
         }, function () {});
       }
@@ -363,23 +386,10 @@
     });
   }
 
-  async function initVisualLayer() {
+  function initVisualLayer() {
     document.documentElement.classList.add("veil-active");
-    try {
-      if (!globalThis.__VEIL_NSFW) {
-        var resp = await sendMessage({ type: "veil:ensureModel" });
-        if (!resp || !resp.ok || !globalThis.__VEIL_NSFW) {
-          throw new Error(resp && resp.error ? resp.error : "model injection failed");
-        }
-      }
-      api = globalThis.__VEIL_NSFW;
-      model = await api.loadModel();
-    } catch (e) {
-      console.warn("[VEIL] visual layer unavailable:", e);
-      document.documentElement.classList.remove("veil-active");
-      document.querySelectorAll(".veil-pending").forEach(failOpen);
-      return;
-    }
+    // Kick off offscreen-doc + model load early so the first verdict is faster.
+    sendMessage({ type: "veil:warm" });
 
     var run = function () {
       scanRoot(document);

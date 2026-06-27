@@ -16,9 +16,8 @@ var DEFAULT_SETTINGS = {
   urlFilteringEnabled: true, // free tier
   visualFilteringEnabled: false, // paid tier
   paid: false,
-  pornThreshold: 0.85,
-  hentaiThreshold: 0.85,
-  sexyThreshold: 0.7
+  // ViT model outputs a single P(nsfw); block at/above this. Lower = stricter.
+  nsfwThreshold: 0.6
 };
 
 async function getSettings() {
@@ -149,64 +148,103 @@ function checkNavigation(details) {
 chrome.webNavigation.onHistoryStateUpdated.addListener(checkNavigation);
 chrome.webNavigation.onReferenceFragmentUpdated.addListener(checkNavigation);
 
+// --- Offscreen classifier (onnxruntime-web can't run in a SW: no dynamic
+// import). We keep one offscreen document alive and relay classify requests. ---
+var creatingOffscreen = null;
+async function ensureOffscreen() {
+  if (await chrome.offscreen.hasDocument()) return;
+  if (!creatingOffscreen) {
+    creatingOffscreen = chrome.offscreen
+      .createDocument({
+        url: "pages/offscreen.html",
+        reasons: ["WORKERS"],
+        justification: "Runs the on-device NSFW image classifier (WebAssembly)."
+      })
+      .catch(function (e) {
+        // A concurrent caller may have created it first; ignore that race.
+        if (!/single offscreen|already/i.test(String(e))) throw e;
+      })
+      .finally(function () {
+        creatingOffscreen = null;
+      });
+  }
+  await creatingOffscreen;
+}
+
+// chrome.offscreen.createDocument resolves when the document exists, but its
+// scripts (and onMessage listener) may not have run yet — so the first send can
+// fail with "Receiving end does not exist". Retry briefly until it's listening.
+async function sendToOffscreen(message) {
+  for (var i = 0; i < 20; i++) {
+    try {
+      var r = await chrome.runtime.sendMessage(message);
+      if (r !== undefined) return r;
+    } catch (e) {
+      if (!/Receiving end does not exist|Could not establish connection/i.test(String(e))) {
+        throw e;
+      }
+    }
+    await new Promise(function (res) {
+      setTimeout(res, 150);
+    });
+  }
+  throw new Error("offscreen document not responding");
+}
+
+async function classifyViaOffscreen(op, payload) {
+  await ensureOffscreen();
+  return sendToOffscreen(Object.assign({ type: "veil:offscreen", op: op }, payload));
+}
+
 // Content script asks whether the visual layer is unlocked + thresholds.
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg && msg.type === "veil:getConfig") {
     getSettings().then(function (s) {
       sendResponse({
         visualFilteringEnabled: s.visualFilteringEnabled && s.paid,
-        pornThreshold: s.pornThreshold,
-        hentaiThreshold: s.hentaiThreshold,
-        sexyThreshold: s.sexyThreshold
+        nsfwThreshold: s.nsfwThreshold
       });
     });
     return true; // async
   }
 
-  // Inject the NSFW bundle into the requesting frame. executeScript bypasses
-  // the page CSP (which blocks content-script dynamic import) and runs in the
-  // same isolated world, so the content script then sees globalThis.__VEIL_NSFW.
-  if (msg && msg.type === "veil:ensureModel") {
-    if (!sender.tab) {
-      sendResponse({ ok: false, error: "no tab" });
-      return false;
-    }
-    chrome.scripting
-      .executeScript({
-        target: { tabId: sender.tab.id, frameIds: [sender.frameId || 0] },
-        files: ["vendor/nsfw-bundle.js"],
-        world: "ISOLATED"
-      })
-      .then(function () {
-        sendResponse({ ok: true });
-      })
-      .catch(function (e) {
+  // Warm up the offscreen document + model load proactively.
+  if (msg && msg.type === "veil:warm") {
+    classifyViaOffscreen("warm", {}).then(
+      function (r) {
+        sendResponse(r || { ok: false });
+      },
+      function (e) {
         sendResponse({ ok: false, error: String(e) });
-      });
+      }
+    );
     return true; // async
   }
 
-  // Cross-origin image fetch for the classifier. SW fetches bypass page CORS
-  // via host_permissions, so the bytes are readable and yield an untainted
-  // bitmap the content script can classify.
-  if (msg && msg.type === "veil:fetchImage" && msg.url) {
-    (async function () {
-      try {
-        var resp = await fetch(msg.url);
-        if (!resp.ok) throw new Error("HTTP " + resp.status);
-        var blob = await resp.blob();
-        var buf = await blob.arrayBuffer();
-        var bytes = new Uint8Array(buf);
-        var bin = "";
-        var CHUNK = 0x8000;
-        for (var i = 0; i < bytes.length; i += CHUNK) {
-          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-        }
-        sendResponse({ ok: true, contentType: blob.type, data: btoa(bin) });
-      } catch (e) {
+  // Classify an image URL: the offscreen document fetches it (CORS-bypassed by
+  // host_permissions), decodes, and runs the ViT model. Returns { ok, nsfw }.
+  if (msg && msg.type === "veil:classifyUrl" && msg.url) {
+    classifyViaOffscreen("url", { url: msg.url }).then(
+      function (r) {
+        sendResponse(r || { ok: false, error: "no response" });
+      },
+      function (e) {
         sendResponse({ ok: false, error: String(e) });
       }
-    })();
+    );
+    return true; // async
+  }
+
+  // Classify raw 384x384 RGBA pixels (a video frame the content script read).
+  if (msg && msg.type === "veil:classifyPixels" && msg.data) {
+    classifyViaOffscreen("pixels", { data: msg.data }).then(
+      function (r) {
+        sendResponse(r || { ok: false, error: "no response" });
+      },
+      function (e) {
+        sendResponse({ ok: false, error: String(e) });
+      }
+    );
     return true; // async
   }
 });

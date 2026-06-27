@@ -91,7 +91,7 @@ try {
   // onInstalled writes defaults asynchronously; seeding before it settles gets
   // clobbered. Wait for the default write, then set our overrides and confirm.
   let readBack;
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 25; attempt++) {
     await worker.evaluate(() => new Promise((res) => {
       chrome.storage.sync.set(
         {
@@ -99,17 +99,19 @@ try {
           visualFilteringEnabled: true,
           urlFilteringEnabled: true,
           // Force the cover path on the benign test image so we can verify the
-          // overlay geometry (real NSFW images hit these thresholds naturally).
-          sexyThreshold: 0
+          // overlay geometry (real NSFW images hit this threshold naturally).
+          nsfwThreshold: 0
         },
         () => res(true)
       );
     }));
+    // Wait, then read — so onInstalled's delayed default write can't clobber us
+    // unseen. Re-seed until it stays put.
+    await new Promise((r) => setTimeout(r, 300));
     readBack = await worker.evaluate(() => new Promise((res) => {
       chrome.storage.sync.get(null, (v) => res(v));
     }));
-    if (readBack.paid === true && readBack.visualFilteringEnabled === true) break;
-    await new Promise((r) => setTimeout(r, 250));
+    if (readBack.paid === true && readBack.visualFilteringEnabled === true && readBack.nsfwThreshold === 0) break;
   }
   console.log("storage after seed:", JSON.stringify(readBack));
 

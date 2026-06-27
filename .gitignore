@@ -2,4 +2,8 @@ node_modules/
 .cache-cft/
 *.log
 
-# vendor/nsfw-bundle.js IS committed so the extension loads without a build step.
+# Large binaries fetched by `npm run setup` (not committed):
+model/*.onnx
+vendor/ort/*.wasm
+vendor/ort/*.mjs
+vendor/ort/*.js

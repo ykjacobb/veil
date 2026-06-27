@@ -38,11 +38,13 @@ const browser = await puppeteer.launch({
 try {
   const sw = await browser.waitForTarget((t) => t.type() === "service_worker", { timeout: 15000 });
   const worker = await sw.worker();
-  for (let i = 0; i < 20; i++) {
-    await worker.evaluate(() => new Promise((res) => chrome.storage.sync.set({ paid: true, visualFilteringEnabled: true, urlFilteringEnabled: true, sexyThreshold: 0 }, () => res(1))));
+  // Wait for onInstalled's default write to land first, then override, so its
+  // delayed write can't clobber our seed; confirm it stays put after a delay.
+  for (let i = 0; i < 25; i++) {
+    await worker.evaluate(() => new Promise((res) => chrome.storage.sync.set({ paid: true, visualFilteringEnabled: true, urlFilteringEnabled: true, nsfwThreshold: 0 }, () => res(1))));
+    await new Promise((r) => setTimeout(r, 300));
     const rb = await worker.evaluate(() => new Promise((res) => chrome.storage.sync.get(null, res)));
-    if (rb.paid && rb.visualFilteringEnabled && rb.sexyThreshold === 0) break;
-    await new Promise((r) => setTimeout(r, 250));
+    if (rb.paid && rb.visualFilteringEnabled && rb.nsfwThreshold === 0) break;
   }
   const page = await browser.newPage();
   await page.goto(`http://localhost:${pagePort}/`, { waitUntil: "load" });
