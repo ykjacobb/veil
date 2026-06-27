@@ -13,6 +13,7 @@
 
   function configureOrt() {
     if (configured) return;
+    self.ort.env.logLevel = "error"; // silence benign EP-assignment warnings
     var w = self.ort.env.wasm;
     w.numThreads = 1; // no SharedArrayBuffer / cross-origin isolation needed
     w.simd = true;
@@ -25,10 +26,14 @@
     if (sessionPromise) return sessionPromise;
     sessionPromise = (async function () {
       configureOrt();
-      var url = chrome.runtime.getURL("model/vit-nsfw-int8.onnx");
+      // Full-precision (fp32) model: correct on WebGPU (int8 quant is unreliable
+      // on the WebGPU backend) and on the WASM fallback.
+      var url = chrome.runtime.getURL("model/vit-nsfw.onnx");
       var buf = await (await fetch(url)).arrayBuffer();
+      // Prefer WebGPU (≈10-50× faster on a real GPU); fall back to WASM.
       return self.ort.InferenceSession.create(new Uint8Array(buf), {
-        executionProviders: ["wasm"]
+        executionProviders: ["webgpu", "wasm"],
+        logSeverityLevel: 3 // errors only — quiet the per-session EP warnings
       });
     })();
     return sessionPromise;

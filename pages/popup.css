@@ -31,6 +31,15 @@ header {
 }
 .label { font-size: 14px; }
 .sub { font-size: 11px; color: #8a8aa0; margin-top: 2px; }
+.sens { display: none; }
+.sens.show { display: flex; }
+.sens input[type="range"] {
+  width: 100%;
+  margin-top: 10px;
+  accent-color: #5a5af0;
+  cursor: pointer;
+}
+
 .upsell {
   padding: 14px 16px;
   background: #1b1b2a;

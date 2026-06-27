@@ -98,6 +98,16 @@
     return (scores.nsfw || 0) >= config.nsfwThreshold;
   }
 
+  // Lightweight diagnostic so you can see detection working in the page console.
+  function logScore(kind, scores) {
+    var n = scores && typeof scores.nsfw === "number" ? scores.nsfw : -1;
+    console.log(
+      "[VEIL] " + kind + " nsfw=" + n.toFixed(3) +
+      " threshold=" + config.nsfwThreshold +
+      (n >= config.nsfwThreshold ? " → BLOCKED" : "")
+    );
+  }
+
   // Wrap an element once so we can lay a cover over it (sized via inset:0). The
   // cover starts hidden; setBlocked toggles it.
   function ensureCover(el) {
@@ -179,10 +189,11 @@
     whenNearViewport(img, function () {
       classifyImage(img).then(
         function (s) {
+          logScore("image", s);
           setBlocked(img, isNsfw(s));
         },
-        function () {
-          /* couldn't classify — leave visible */
+        function (e) {
+          console.log("[VEIL] image classify failed:", String(e));
         }
       );
     });
@@ -209,6 +220,7 @@
       if (tooSmall(video.videoWidth, video.videoHeight)) return; // not ready yet
       classifyVideoFrameDirect(video).then(
         function (s) {
+          logScore("video", s);
           setBlocked(video, isNsfw(s));
         },
         function () {
@@ -244,6 +256,7 @@
     whenNearViewport(el, function () {
       classifyUrl(url).then(
         function (s) {
+          logScore("background", s);
           setBlocked(el, isNsfw(s));
         },
         function () {}
@@ -331,5 +344,18 @@
     if (!cfg) return;
     config = cfg;
     if (config.visualFilteringEnabled) initVisualLayer();
+  });
+
+  // React to settings changes (e.g. the sensitivity slider) without a reload.
+  // New threshold applies to subsequent classifications; turning the layer on
+  // starts scanning immediately.
+  chrome.storage.onChanged.addListener(function (changes, area) {
+    if (area !== "sync") return;
+    sendMessage({ type: "veil:getConfig" }).then(function (cfg) {
+      if (!cfg) return;
+      var wasOn = config && config.visualFilteringEnabled;
+      config = cfg;
+      if (config.visualFilteringEnabled && !wasOn) initVisualLayer();
+    });
   });
 })();

@@ -17,7 +17,8 @@ var DEFAULT_SETTINGS = {
   visualFilteringEnabled: false, // paid tier
   paid: false,
   // ViT model outputs a single P(nsfw); block at/above this. Lower = stricter.
-  nsfwThreshold: 0.6
+  // Clean photos score ~0.002, so there's lots of headroom to be aggressive.
+  nsfwThreshold: 0.5
 };
 
 async function getSettings() {

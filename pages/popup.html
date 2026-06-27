@@ -24,13 +24,21 @@
 
     <section class="row">
       <div>
-        <div class="label">Visual AI blur</div>
+        <div class="label">Visual AI block</div>
         <div class="sub" id="visualSub">On-device NSFW detection</div>
       </div>
       <label class="switch">
         <input type="checkbox" id="visualFiltering" />
         <span class="slider"></span>
       </label>
+    </section>
+
+    <section class="row sens" id="sensRow">
+      <div style="width: 100%">
+        <div class="label">Detection sensitivity</div>
+        <div class="sub"><span id="sensLabel">Balanced</span> · higher blocks more</div>
+        <input type="range" id="sensitivity" min="0" max="100" step="5" />
+      </div>
     </section>
 
     <section class="upsell" id="upsell">

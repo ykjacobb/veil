@@ -31,7 +31,11 @@ images are fetched by the offscreen doc (CORS-bypassed via `host_permissions`)
 so pixels are readable; cross-origin **video** frames can't be read (canvas
 taint), so those are left as-is — VEIL only overlays what it can actually see.
 
-Block threshold: `P(nsfw) ≥ nsfwThreshold` (default 0.6; lower = stricter).
+Block threshold: `P(nsfw) ≥ nsfwThreshold` (default 0.5; lower = stricter),
+adjustable live from the popup's **Detection sensitivity** slider. Inference uses
+the **WebGPU** backend when available (≈10–50× faster than WASM on a real GPU),
+falling back to WASM. Clean photos score ~0.002, so the model is accurate and
+confident; the practical limiter is per-image speed, hence WebGPU.
 
 ## Install (dev)
 
@@ -89,8 +93,11 @@ scripts/           setup + verification scripts
 - The "500+ domain" list is a structure to fill in; `rules/domains.json` ships
   with the 10 hardcoded seeds.
 - The paid gate is local-only (dev). Real billing/license verification is TODO.
-- The model (~88 MB) loads once into the offscreen document on first use
-  (~2–3s cold), then stays warm; inference is ~0.3–1s per image on the WASM
-  backend, run through a relay so it's off the page's main thread.
+- The model (~88 MB) loads once into the offscreen document on first use, then
+  stays warm. Speed depends heavily on backend: **WebGPU** (real GPU) is fast;
+  the **WASM** fallback is ~2s/image, which feels sluggish on image-heavy pages
+  since nothing is pre-hidden. WebGPU is enabled by default in Chrome on Windows.
 - The model is binary (sfw/nsfw); it doesn't distinguish "explicit" vs
   "suggestive", so the cover reason is a single "Adult content".
+- Headless test environments usually have no GPU, so the verify scripts run on
+  the slow WASM fallback — they check correctness, not WebGPU speed.

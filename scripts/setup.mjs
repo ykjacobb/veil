@@ -10,12 +10,16 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ortDist = path.join(repo, "node_modules", "onnxruntime-web", "dist");
 const ortOut = path.join(repo, "vendor", "ort");
 const modelDir = path.join(repo, "model");
-const modelPath = path.join(modelDir, "vit-nsfw-int8.onnx");
+const modelPath = path.join(modelDir, "vit-nsfw.onnx");
 const MODEL_URL =
-  "https://huggingface.co/AdamCodd/vit-base-nsfw-detector/resolve/main/onnx/model_quantized.onnx";
+  "https://huggingface.co/AdamCodd/vit-base-nsfw-detector/resolve/main/onnx/model.onnx";
 
 const ORT_FILES = [
-  "ort.wasm.min.js",
+  "ort.webgpu.min.js", // WebGPU build (also contains the WASM fallback)
+  "ort-wasm-simd-threaded.jsep.wasm",
+  "ort-wasm-simd-threaded.jsep.mjs",
+  "ort-wasm-simd-threaded.asyncify.wasm",
+  "ort-wasm-simd-threaded.asyncify.mjs",
   "ort-wasm-simd-threaded.wasm",
   "ort-wasm-simd-threaded.mjs"
 ];
@@ -57,7 +61,7 @@ async function ensureModel() {
     console.log("model already present (" + (fs.statSync(modelPath).size / 1e6).toFixed(0) + " MB)");
     return;
   }
-  console.log("downloading model (~88 MB) ...");
+  console.log("downloading model (~344 MB) ...");
   await download(MODEL_URL, modelPath);
   console.log("saved model/vit-nsfw-int8.onnx");
 }
