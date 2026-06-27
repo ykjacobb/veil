@@ -1,0 +1,23 @@
+{
+  "name": "veil",
+  "version": "0.1.0",
+  "private": true,
+  "description": "VEIL Chrome extension build tooling.",
+  "type": "module",
+  "scripts": {
+    "build:vendor": "node scripts/build-vendor.mjs",
+    "verify:browser": "node scripts/verify-browser.mjs",
+    "verify:extension": "node scripts/verify-extension.mjs",
+    "verify:video": "node scripts/verify-video.mjs",
+    "verify:bg": "node scripts/verify-bg.mjs",
+    "setup": "npm run build:vendor"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "puppeteer-core": "^22.15.0"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs": "^4.20.0",
+    "nsfwjs": "^4.2.0"
+  }
+}

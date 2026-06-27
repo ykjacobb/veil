@@ -1,0 +1,64 @@
+/* VEIL visual layer styling — full block, no blur. */
+
+/*
+ * Hide-then-reveal for images / background thumbnails: keep un-classified
+ * elements invisible (NOT blurred) so NSFW never flashes, then reveal the clean
+ * ones. Videos are not pre-hidden (they'd risk getting stuck), they're covered
+ * as soon as a frame is flagged or can't be verified.
+ */
+.veil-active .veil-pending {
+  visibility: hidden !important;
+}
+
+/* The covered element itself is hidden underneath the cover, as a backstop in
+ * case the cover overlay can't be placed (exotic layouts). */
+.veil-blocked-el {
+  visibility: hidden !important;
+}
+
+.veil-clean {
+  visibility: visible !important;
+  filter: none !important;
+}
+
+/* Wrapper + opaque WHITE cover that completely blocks the element. */
+.veil-cover-wrap {
+  position: relative !important;
+  display: inline-block !important;
+  overflow: hidden !important;
+  max-width: 100% !important;
+}
+
+.veil-cover {
+  position: absolute !important;
+  inset: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  background: #ffffff !important;
+  color: #15151f !important;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif !important;
+  text-align: center !important;
+  padding: 8px !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+  z-index: 2147483647 !important;
+  visibility: visible !important;
+}
+
+.veil-cover .veil-cover-title {
+  font-weight: 700 !important;
+  font-size: 14px !important;
+  line-height: 1.2 !important;
+  color: #15151f !important;
+  letter-spacing: 0.01em !important;
+}
+
+.veil-cover .veil-cover-sub {
+  font-size: 11px !important;
+  line-height: 1.3 !important;
+  color: #6a6a78 !important;
+  max-width: 92% !important;
+}

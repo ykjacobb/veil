@@ -1,0 +1,25 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "redirect",
+      "redirect": { "extensionPath": "/pages/blocked.html?reason=domain" }
+    },
+    "condition": {
+      "requestDomains": [
+        "pornhub.com",
+        "xvideos.com",
+        "xhamster.com",
+        "redtube.com",
+        "youporn.com",
+        "onlyfans.com",
+        "chaturbate.com",
+        "livejasmin.com",
+        "brazzers.com",
+        "bangbros.com"
+      ],
+      "resourceTypes": ["main_frame", "sub_frame"]
+    }
+  }
+]

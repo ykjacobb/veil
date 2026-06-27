@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Blocked by VEIL</title>
+    <style>
+      :root { color-scheme: dark; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at 50% 30%, #1b1b27, #0c0c12);
+        color: #e9e9f2;
+        font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      }
+      .card {
+        text-align: center;
+        max-width: 440px;
+        padding: 40px;
+      }
+      .mark {
+        font: 700 28px/1 system-ui;
+        letter-spacing: 0.35em;
+        color: #fff;
+        margin-bottom: 24px;
+      }
+      h1 { font-size: 20px; margin: 0 0 10px; font-weight: 600; }
+      p { color: #a6a6b8; line-height: 1.5; margin: 0 0 8px; }
+      .reason {
+        margin-top: 22px;
+        font-size: 13px;
+        color: #7d7d92;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="mark">VEIL</div>
+      <h1>This page was blocked</h1>
+      <p>VEIL filtered this request before it loaded.</p>
+      <div class="reason" id="reason"></div>
+    </div>
+    <script src="blocked.js"></script>
+  </body>
+</html>

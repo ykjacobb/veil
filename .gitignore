@@ -1,0 +1,5 @@
+node_modules/
+.cache-cft/
+*.log
+
+# vendor/nsfw-bundle.js IS committed so the extension loads without a build step.

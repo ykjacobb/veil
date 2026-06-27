@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>VEIL</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <span class="mark">VEIL</span>
+      <span class="tier" id="tier">Free</span>
+    </header>
+
+    <section class="row">
+      <div>
+        <div class="label">URL &amp; domain blocking</div>
+        <div class="sub">Free · always available</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="urlFiltering" />
+        <span class="slider"></span>
+      </label>
+    </section>
+
+    <section class="row">
+      <div>
+        <div class="label">Visual AI blur</div>
+        <div class="sub" id="visualSub">On-device NSFW detection</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="visualFiltering" />
+        <span class="slider"></span>
+      </label>
+    </section>
+
+    <section class="upsell" id="upsell">
+      <p>Visual AI blur is a paid feature (£3–5/mo).</p>
+      <button id="unlock">Unlock (dev: simulate paid)</button>
+    </section>
+
+    <footer>Everything runs on your device. Nothing is uploaded.</footer>
+    <script src="popup.js"></script>
+  </body>
+</html>
