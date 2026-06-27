@@ -21,17 +21,15 @@ finds every `<img>`, `<video>`, **and CSS `background-image` thumbnail**, the SW
 relays them to the offscreen doc, and a single `P(nsfw)` comes back. Lazy-loaded
 images are re-checked when their `src`/`srcset` swaps in.
 
-There is **no blur** — flagged media is fully replaced with an opaque **white
-cover** reading "Blocked by VEIL". Un-classified images/thumbnails are kept
-invisible (hide-then-reveal) until cleared, so NSFW never flashes. Covered videos
-are muted and force-paused and can't resume. Cross-origin images are fetched by
-the offscreen doc (CORS-bypassed via `host_permissions`) so pixels are readable.
-
-Videos are **fail-closed** and re-sampled every 1s: revealed only when a frame
-VEIL can read classifies as clean. The moment any frame is flagged — or can't be
-read (cross-origin taint, DRM/streamed HLS/DASH or `blob:`) — the **whole video
-is blocked for the session**. An explicit poster covers it before frames decode.
-This means legit streamed video (e.g. YouTube) is also covered, by design.
+The overlay is **reactive, no blur**: when something classifies as NSFW it gets
+an opaque **white cover** reading "Blocked by VEIL"; when it's no longer NSFW the
+cover is removed. Images are classified once near the viewport (and again if
+their `src` swaps). Videos are re-checked every 1s: while a frame is NSFW the
+overlay is shown and the **audio is muted** (the video is *not* paused, so it
+keeps playing and the overlay clears once it plays past the scene). Cross-origin
+images are fetched by the offscreen doc (CORS-bypassed via `host_permissions`)
+so pixels are readable; cross-origin **video** frames can't be read (canvas
+taint), so those are left as-is — VEIL only overlays what it can actually see.
 
 Block threshold: `P(nsfw) ≥ nsfwThreshold` (default 0.6; lower = stricter).
 
@@ -77,12 +75,13 @@ scripts/           setup + verification scripts
 
 ## Known limitations (by design / platform constraints)
 
-- Classification runs after decode. Images/thumbnails are classified only when
-  near the viewport (IntersectionObserver) and hidden just for that brief
-  window, with a safety timeout that reveals them if the classifier is too slow
-  — so a heavy page never ends up all-hidden waiting on the serial model.
-  Videos aren't pre-hidden (they could get stuck), so a flagged video may show
-  one frame before it's covered.
+- Classification runs after decode and nothing is pre-hidden, so an NSFW image
+  or video frame can be visible for a moment before the overlay lands. To keep
+  the single classifier from being flooded, elements are only classified when
+  near the viewport (IntersectionObserver).
+- Cross-origin video frames can't be read (canvas taint), so such videos can't
+  be analyzed and aren't overlaid. Cross-origin *images* are fine (fetched by
+  the offscreen doc).
 - Keyword matching uses letter boundaries to avoid `sussex`/`camera` false
   positives, but URL filtering will always have some over/under-blocking.
 - DNR can't see History-API navigations; those rely on the webNavigation +

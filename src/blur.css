@@ -1,27 +1,8 @@
-/* VEIL visual layer styling — full block, no blur. */
+/* VEIL visual layer styling — reactive white overlay, no blur. */
 
-/*
- * Hide-then-reveal for images / background thumbnails: keep un-classified
- * elements invisible (NOT blurred) so NSFW never flashes, then reveal the clean
- * ones. Videos are not pre-hidden (they'd risk getting stuck), they're covered
- * as soon as a frame is flagged or can't be verified.
- */
-.veil-active .veil-pending {
-  visibility: hidden !important;
-}
-
-/* The covered element itself is hidden underneath the cover, as a backstop in
- * case the cover overlay can't be placed (exotic layouts). */
-.veil-blocked-el {
-  visibility: hidden !important;
-}
-
-.veil-clean {
-  visibility: visible !important;
-  filter: none !important;
-}
-
-/* Wrapper + opaque WHITE cover that completely blocks the element. */
+/* Wrapper + opaque WHITE cover that completely blocks the element while NSFW.
+ * The cover is hidden by default and shown only when .veil-on is added, so it
+ * toggles on/off as the classifier's verdict changes. */
 .veil-cover-wrap {
   position: relative !important;
   display: inline-block !important;
@@ -30,9 +11,9 @@
 }
 
 .veil-cover {
+  display: none !important;
   position: absolute !important;
   inset: 0 !important;
-  display: flex !important;
   flex-direction: column !important;
   align-items: center !important;
   justify-content: center !important;
@@ -45,7 +26,10 @@
   box-sizing: border-box !important;
   overflow: hidden !important;
   z-index: 2147483647 !important;
-  visibility: visible !important;
+}
+
+.veil-cover.veil-on {
+  display: flex !important;
 }
 
 .veil-cover .veil-cover-title {

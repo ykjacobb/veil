@@ -94,99 +94,58 @@
     return { nsfw: r.nsfw };
   }
 
-  // Silence + freeze a covered video so its audio stops and it can't resume,
-  // even if the page tries to autoplay/unmute it again.
-  function silenceVideo(el) {
-    try {
-      el.muted = true;
-      el.pause();
-      el.removeAttribute("autoplay");
-      if (!el.dataset.veilMuted) {
-        el.dataset.veilMuted = "1";
-        el.addEventListener("play", function () {
-          el.muted = true;
-          el.pause();
-        });
-        el.addEventListener("volumechange", function () {
-          if (!el.muted) el.muted = true;
-        });
+  function isNsfw(scores) {
+    return (scores.nsfw || 0) >= config.nsfwThreshold;
+  }
+
+  // Wrap an element once so we can lay a cover over it (sized via inset:0). The
+  // cover starts hidden; setBlocked toggles it.
+  function ensureCover(el) {
+    if (el.__veilCover) return el.__veilCover;
+    var parent = el.parentNode;
+    if (!parent) return null;
+    var wrap = document.createElement("span");
+    wrap.className = "veil-cover-wrap";
+    parent.insertBefore(wrap, el);
+    wrap.appendChild(el);
+
+    var cover = document.createElement("div");
+    cover.className = "veil-cover";
+    var titleEl = document.createElement("div");
+    titleEl.className = "veil-cover-title";
+    titleEl.textContent = "Blocked by VEIL";
+    var subEl = document.createElement("div");
+    subEl.className = "veil-cover-sub";
+    subEl.textContent = "Adult content";
+    cover.appendChild(titleEl);
+    cover.appendChild(subEl);
+    wrap.appendChild(cover);
+    el.__veilCover = cover;
+    return cover;
+  }
+
+  // Reactive overlay: show the cover (and mute video audio) while NSFW; hide it
+  // (and unmute) once the content is no longer NSFW. Videos are NOT paused, so
+  // they keep playing and the overlay clears when the scene passes.
+  function setBlocked(el, blocked) {
+    if (blocked) {
+      var cover = ensureCover(el);
+      if (cover) cover.classList.add("veil-on");
+      if (el.tagName === "VIDEO" && !el.muted) {
+        el.__veilMutedByUs = true;
+        el.muted = true;
       }
-    } catch (e) {
-      /* ignore */
-    }
-  }
-
-  // Fully block a flagged element: hide it and lay an opaque white cover over it
-  // that says it's blocked. We wrap the element so the cover sizes to it via
-  // inset:0; the element itself is hidden underneath as a backstop.
-  function coverElement(el, title, sub) {
-    el.classList.remove("veil-pending", "veil-clean");
-    el.classList.add("veil-blocked-el");
-    if (el.tagName === "VIDEO") silenceVideo(el);
-    if (el.dataset.veilCovered) return;
-    el.dataset.veilCovered = "1";
-
-    try {
-      var parent = el.parentNode;
-      if (!parent) return; // can't wrap; element stays hidden as backstop
-      var wrap = document.createElement("span");
-      wrap.className = "veil-cover-wrap";
-      parent.insertBefore(wrap, el);
-      wrap.appendChild(el);
-
-      var cover = document.createElement("div");
-      cover.className = "veil-cover";
-      var titleEl = document.createElement("div");
-      titleEl.className = "veil-cover-title";
-      titleEl.textContent = title;
-      var subEl = document.createElement("div");
-      subEl.className = "veil-cover-sub";
-      subEl.textContent = sub;
-      cover.appendChild(titleEl);
-      cover.appendChild(subEl);
-      wrap.appendChild(cover);
-    } catch (e) {
-      /* wrapping failed (exotic layout) — element stays hidden as backstop */
-    }
-  }
-
-  // Map scores -> a block verdict, or null if clean.
-  function verdictFor(scores) {
-    if ((scores.nsfw || 0) >= config.nsfwThreshold) {
-      return { title: "Blocked by VEIL", sub: "Adult content" };
-    }
-    return null;
-  }
-
-  function applyVerdict(el, scores) {
-    var v = verdictFor(scores);
-    if (v) {
-      coverElement(el, v.title, v.sub);
     } else {
-      el.classList.remove("veil-pending");
-      el.classList.add("veil-clean");
+      if (el.__veilCover) el.__veilCover.classList.remove("veil-on");
+      if (el.tagName === "VIDEO" && el.__veilMutedByUs) {
+        el.__veilMutedByUs = false;
+        el.muted = false;
+      }
     }
   }
 
-  // Cover-only: blocks if scores are explicit, but never reveals.
-  // Used for video posters, where a clean poster doesn't prove the video is clean.
-  function coverIfExplicit(el, scores) {
-    var v = verdictFor(scores);
-    if (v) {
-      coverElement(el, v.title, v.sub);
-      return true;
-    }
-    return false;
-  }
-
-  function failOpen(el) {
-    el.classList.remove("veil-pending");
-    el.classList.add("veil-clean");
-  }
-
-  // Only classify elements near the viewport (so we don't hide the whole page
-  // and flood the single classifier), and never leave one hidden indefinitely.
-  var REVEAL_TIMEOUT_MS = 6000;
+  // Only classify elements near the viewport (keeps the single classifier from
+  // being flooded by an entire long page at once).
   var io = null;
   function whenNearViewport(el, fn) {
     if (!("IntersectionObserver" in window)) {
@@ -213,39 +172,25 @@
     io.observe(el);
   }
 
-  // Hide → classify → apply verdict, with a safety timeout that reveals the
-  // element if classification is too slow, so nothing stays hidden ("black").
-  function hideClassifyApply(el, classify) {
-    el.classList.add("veil-pending");
-    var timer = setTimeout(function () {
-      if (!el.dataset.veilCovered) failOpen(el);
-    }, REVEAL_TIMEOUT_MS);
-    classify(el).then(
-      function (s) {
-        clearTimeout(timer);
-        applyVerdict(el, s);
-      },
-      function () {
-        clearTimeout(timer);
-        failOpen(el);
-      }
-    );
-  }
-
+  // Images are static: classify once it's near the viewport, then block/unblock.
   function scanImage(img) {
     if (SEEN.has(img)) return;
     SEEN.add(img);
     whenNearViewport(img, function () {
-      hideClassifyApply(img, classifyImage);
+      classifyImage(img).then(
+        function (s) {
+          setBlocked(img, isNsfw(s));
+        },
+        function () {
+          /* couldn't classify — leave visible */
+        }
+      );
     });
   }
 
-  /*
-   * Video policy (fail-closed): a video is revealed ONLY when a frame we can
-   * actually read classifies as clean. If frames can't be read (cross-origin
-   * taint, DRM/streamed) the video stays covered. The poster, if present, is an
-   * early cover-only catch. Stays blurred (veil-pending) until first decision.
-   */
+  // Videos: re-check the current frame every second and toggle the overlay, so
+  // it covers NSFW scenes and clears once the video plays past them. Cross-origin
+  // frames can't be read (canvas taint); those are left as-is (we can't see them).
   function watchVideo(video) {
     if (SEEN.has(video)) return;
     SEEN.add(video);
@@ -255,44 +200,22 @@
   }
 
   function startWatchingVideo(video) {
-    // Videos are NOT pre-hidden: an un-classifiable video could otherwise get
-    // stuck hidden forever. They're covered the moment a frame is flagged or
-    // can't be verified (usually the first readable tick for cross-origin).
-
-    var stop = function () {
-      var t = videoTimers.get(video);
-      if (t) {
-        clearInterval(t);
-        videoTimers.delete(video);
-      }
-    };
-
-    // Early catch: an explicit poster covers before frames even decode.
     if (video.poster) {
       classifyUrl(video.poster).then(function (s) {
-        if (!video.dataset.veilCovered && coverIfExplicit(video, s)) stop();
+        if (isNsfw(s)) setBlocked(video, true);
       }, function () {});
     }
-
     var tick = function () {
-      if (video.dataset.veilCovered) {
-        stop();
-        return;
-      }
-      if (tooSmall(video.videoWidth, video.videoHeight)) return; // not ready; retry
+      if (tooSmall(video.videoWidth, video.videoHeight)) return; // not ready yet
       classifyVideoFrameDirect(video).then(
-        function (scores) {
-          applyVerdict(video, scores); // clean frame reveals; explicit covers
-          if (video.dataset.veilCovered) stop();
+        function (s) {
+          setBlocked(video, isNsfw(s));
         },
         function () {
-          // Frame unreadable (cross-origin/DRM) -> fail closed.
-          coverElement(video, "Blocked by VEIL", "Video couldn't be verified");
-          stop();
+          /* frame unreadable (cross-origin/DRM) — leave current state */
         }
       );
     };
-
     tick();
     videoTimers.set(video, setInterval(tick, 1000));
   }
@@ -310,7 +233,7 @@
 
   // Thumbnails are often CSS background-images (not <img>). Classify those too.
   function scanBackgroundEl(el) {
-    if (SEEN.has(el) || el.dataset.veilCovered) return;
+    if (SEEN.has(el)) return;
     var url = bgImageUrl(el);
     if (!url) return;
     var rect = el.getBoundingClientRect();
@@ -319,9 +242,12 @@
     if (rect.width >= innerWidth * 0.9 && rect.height >= innerHeight * 0.9) return;
     SEEN.add(el);
     whenNearViewport(el, function () {
-      hideClassifyApply(el, function () {
-        return classifyUrl(url);
-      });
+      classifyUrl(url).then(
+        function (s) {
+          setBlocked(el, isNsfw(s));
+        },
+        function () {}
+      );
     });
   }
 
@@ -342,18 +268,17 @@
     scanBackgrounds(root);
   }
 
-  // Re-evaluate an element whose relevant attribute changed (lazy-loading).
+  // Re-evaluate an element whose relevant attribute changed (lazy-loading,
+  // carousels, src swaps) — re-classify and toggle the overlay accordingly.
   function onAttrChange(target, attr) {
     if (!target || target.nodeType !== 1) return;
     if (target.tagName === "IMG" && (attr === "src" || attr === "srcset")) {
-      if (target.dataset.veilCovered) return; // already covered; keep
       SEEN.delete(target);
-      target.classList.remove("veil-clean");
       scanImage(target);
     } else if (target.tagName === "VIDEO" && attr === "poster") {
-      if (!target.dataset.veilCovered && target.poster) {
+      if (target.poster) {
         classifyUrl(target.poster).then(function (s) {
-          coverIfExplicit(target, s);
+          setBlocked(target, isNsfw(s));
         }, function () {});
       }
     } else if (attr === "style" || attr === "class") {
